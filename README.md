@@ -1,6 +1,6 @@
 # AI Doctor v3.1 - Intelligent Healthcare Assistant
 
-![Landing Page](./frontend/src/assets/screenshots/landing.png)
+![Landing Page](./screenshots/landing.png)
 
 AI Doctor is a cutting-edge, full-stack healthcare platform that leverages advanced Large Language Models (LLMs) to provide instant, structured, and personalized medical consultation. Featuring a modern, immersive 3D interface and multi-model comparison capabilities, it represents the future of AI-driven primary care.
 
@@ -37,15 +37,15 @@ AI Doctor is a cutting-edge, full-stack healthcare platform that leverages advan
 
 ### 1. Immersive Landing Page
 The landing page features a 3D medical robot, setting the tone for a futuristic healthcare experience.
-![Landing Page](./frontend/src/assets/screenshots/landing.png)
+![Landing Page](./screenshots/landing.png)
 
 ### 2. Multi-Model Arena
 Compare responses from different AI models to ensure the most comprehensive advice.
-![Model Arena](./frontend/src/assets/screenshots/arena.png)
+![Model Arena](./screenshots/arena.png)
 
 ### 3. Intelligent Chat Interface
 Dr. Vaani provides personalized care with multilingual support.
-![Chat Interface](./frontend/src/assets/screenshots/chat.png)
+![Chat Interface](./screenshots/chat.png)
 
 ## 📦 Installation & Setup
 

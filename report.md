@@ -84,18 +84,18 @@ AI Doctor v3.1 prioritizes an "Immersive Industrial" aesthetic.
 
 #### Landing Experience
 The entry point features a cinematic 3D interaction with a high-fidelity robot avatar, setting a futuristic and professional tone.
-![Landing Page](./frontend/src/assets/screenshots/landing.png)
+![Landing Page](./screenshots/landing.png)
 
 #### Intelligent Consultation Interface
 A clean, chat-centric interface ("Dr. Vaani") that supports voice input and provides empathetic, context-aware medical responses.
-![Chat Interface](./frontend/src/assets/screenshots/chat.png)
+![Chat Interface](./screenshots/chat.png)
 
 #### Multi-Model Comparative View (The Arena)
 Users can instantly compare diagnosis perspectives from three leading LLMs:
 - **Gemini (Blue):** Optimized for speed and medical reasoning.
 - **GPT (Green):** Focused on conversational accuracy.
 - **Claude (Purple):** Specialized in empathetic and detailed guidance.
-![Model Arena](./frontend/src/assets/screenshots/arena.png)
+![Model Arena](./screenshots/arena.png)
 
 ---
 

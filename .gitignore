@@ -41,4 +41,6 @@ Thumbs.db
 
 # Logs
 *.log
-VERCEL_DEPLOYMENT.md
+
+# Project Documentation
+# VERCEL_DEPLOYMENT.md is included in the repo
