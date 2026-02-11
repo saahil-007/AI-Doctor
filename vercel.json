@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "buildCommand": "npm ci --prefix frontend && npm run build --prefix frontend",
+  "installCommand": "npm ci --prefix frontend",
+  "buildCommand": "npm run build --prefix frontend",
   "outputDirectory": "frontend/dist",
-  "installCommand": "pip install -r requirements.txt && npm ci --prefix frontend",
   "routes": [
     {
       "src": "/api/(.*)",
