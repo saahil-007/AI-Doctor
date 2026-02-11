@@ -26,6 +26,17 @@ gemini_model = None  # Single instance of the Gemini model
 # Context window to store chat history (10 chats)
 chat_context = {}
 
+# Add new imports for the arena functionality
+import concurrent.futures
+from threading import Lock
+
+# Global variables for model clients
+glm_client = None
+openrouter_client = None
+
+# Context window to store chat history for each model (3 chats)
+arena_context = {}
+
 # Required variables for medical consultation
 REQUIRED_VARIABLES = [
     "age",
@@ -38,7 +49,460 @@ REQUIRED_VARIABLES = [
     "more_details"
 ]
 
-# Variable questions to ask the user
+# System prompts for each model
+SYSTEM_PROMPTS = {
+    "gemini": """You are Dr. Vaani, a friendly AI medical assistant powered by Gemini 2.5 Flash. Your task is to collect patient information and provide structured medical advice.
+
+First, collect these required details from the patient:
+1. Age
+2. Gender
+3. Symptoms duration
+
+Then, optionally collect:
+- Recent medical history
+- Allergies
+- Chronic diseases
+- Symptom specifications
+- More details
+- Vitals (optional)
+
+After collecting all information, provide a structured response with these sections:
+1. General Treatment (5 points)
+2. Medical Treatment (5 points) - For medicines, use format: "Take [Medicine Name] ([Composition]) - [Dosage Instructions] for [Duration] for [specific symptom relief] - [Explanation]"
+3. Precautions (3 points)
+4. Reasons (3 points)
+5. When to see doctor (2 points)
+6. Acknowledgement and Conclusion
+
+IMPORTANT: In Medical Treatment section, show short composition instead of manufacturer.
+Keep response under 30 lines total.""",
+    
+    "glm": """You are Dr. Vaani, a friendly AI medical assistant powered by GLM 4.5. Your task is to collect patient information and provide structured medical advice.
+
+First, collect these required details from the patient:
+1. Age
+2. Gender
+3. Symptoms duration
+
+Then, optionally collect:
+- Recent medical history
+- Allergies
+- Chronic diseases
+- Symptom specifications
+- More details
+- Vitals (optional)
+
+After collecting all information, provide a structured response with these sections:
+1. General Treatment (5 points)
+2. Medical Treatment (5 points) - For medicines, use format: "Take [Medicine Name] ([Composition]) - [Dosage Instructions] for [Duration] for [specific symptom relief] - [Explanation]"
+3. Precautions (3 points)
+4. Reasons (3 points)
+5. When to see doctor (2 points)
+6. Acknowledgement and Conclusion
+
+IMPORTANT: In Medical Treatment section, show short composition instead of manufacturer.
+Keep response under 30 lines total.""",
+    
+    "openrouter": """You are Dr. Vaani, a friendly AI medical assistant powered by GPT-3.5 Turbo. Your task is to collect patient information and provide structured medical advice.
+
+First, collect these required details from the patient:
+1. Age
+2. Gender
+3. Symptoms duration
+
+Then, optionally collect:
+- Recent medical history
+- Allergies
+- Chronic diseases
+- Symptom specifications
+- More details
+- Vitals (optional)
+
+After collecting all information, provide a structured response with these sections:
+1. General Treatment (5 points)
+2. Medical Treatment (5 points) - For medicines, use format: "Take [Medicine Name] ([Composition]) - [Dosage Instructions] for [Duration] for [specific symptom relief] - [Explanation]"
+3. Precautions (3 points)
+4. Reasons (3 points)
+5. When to see doctor (2 points)
+6. Acknowledgement and Conclusion
+
+IMPORTANT: In Medical Treatment section, show short composition instead of manufacturer.
+Keep response under 30 lines total."""
+}
+
+# Initialize other AI models
+def initialize_other_models():
+    global glm_client, openrouter_client
+    
+    # Initialize GLM client (this connects to Zhipu AI)
+    try:
+        glm_api_key = os.getenv("GLM_API_KEY")
+        if glm_api_key:
+            # Use importlib to avoid linter errors
+            import importlib
+            zhipuai_module = importlib.import_module("zhipuai")
+            ZhipuAI = getattr(zhipuai_module, "ZhipuAI")
+            glm_client = ZhipuAI(api_key=glm_api_key)
+            logger.info("GLM client initialized successfully")
+        else:
+            logger.warning("GLM_API_KEY not found in environment variables")
+            glm_client = None
+    except ImportError:
+        logger.error("zhipuai package not installed")
+        glm_client = None
+    except Exception as e:
+        logger.error(f"Failed to initialize GLM client: {str(e)}")
+        glm_client = None
+    
+    # Initialize OpenRouter client (this connects to OpenRouter API)
+    try:
+        openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+        if openrouter_api_key:
+            # Use importlib to avoid linter errors
+            import importlib
+            openai_module = importlib.import_module("openai")
+            OpenAI = getattr(openai_module, "OpenAI")
+            openrouter_client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=openrouter_api_key
+            )
+            logger.info("OpenRouter client initialized successfully")
+        else:
+            logger.warning("OPENROUTER_API_KEY not found in environment variables")
+            openrouter_client = None
+    except ImportError:
+        logger.error("openai package not installed")
+        openrouter_client = None
+    except Exception as e:
+        logger.error(f"Failed to initialize OpenRouter client: {str(e)}")
+        openrouter_client = None
+
+# Initialize other models when the module loads
+initialize_other_models()
+
+# Context window functions for arena variable collection
+def initialize_arena_context(user_id, model_name):
+    """Initialize context for a new user and model"""
+    if user_id not in arena_context:
+        arena_context[user_id] = {}
+    
+    arena_context[user_id][model_name] = {
+        "chat_history": deque(maxlen=3),  # Keep only last 3 messages
+        "collected_variables": {},
+        "current_variable": None,
+        "variables_collected": False
+    }
+
+def add_to_arena_history(user_id, model_name, role, message):
+    """Add a message to the user's chat history for a specific model"""
+    if user_id not in arena_context or model_name not in arena_context[user_id]:
+        initialize_arena_context(user_id, model_name)
+    
+    arena_context[user_id][model_name]["chat_history"].append({
+        "role": role,
+        "message": message
+    })
+
+def get_next_uncollected_variable_arena(user_id, model_name):
+    """Get the next variable that needs to be collected for a specific model"""
+    if user_id not in arena_context or model_name not in arena_context[user_id]:
+        initialize_arena_context(user_id, model_name)
+    
+    collected = arena_context[user_id][model_name]["collected_variables"]
+    
+    # Prioritize required variables
+    required_vars = ["age", "gender", "symptoms_duration"]
+    for variable in required_vars:
+        if variable not in collected or not collected[variable]:
+            return variable
+    
+    # Then check other variables
+    for variable in REQUIRED_VARIABLES:
+        if variable not in collected or not collected[variable]:
+            return variable
+    
+    return None
+
+def collect_variable_arena(user_id, model_name, variable, value):
+    """Collect a variable value from the user for a specific model"""
+    if user_id not in arena_context or model_name not in arena_context[user_id]:
+        initialize_arena_context(user_id, model_name)
+    
+    # Skip optional variables if user says "No" or similar
+    if variable in ["recent_medical_history", "allergies", "chronic_diseases"] and value.lower() in ["no", "nope", "none", "nothing", "n/a", "na", "n"]:
+        value = "None reported"
+    
+    arena_context[user_id][model_name]["collected_variables"][variable] = value
+    
+    # Check if all required variables are collected
+    next_var = get_next_uncollected_variable_arena(user_id, model_name)
+    if next_var is None:
+        arena_context[user_id][model_name]["variables_collected"] = True
+    
+    return next_var
+
+def get_user_context_prompt_arena(user_id, model_name):
+    """Generate a prompt with the collected user context for a specific model"""
+    if user_id not in arena_context or model_name not in arena_context[user_id] or not arena_context[user_id][model_name]["variables_collected"]:
+        return ""
+    
+    variables = arena_context[user_id][model_name]["collected_variables"]
+    context_parts = []
+    
+    for variable in REQUIRED_VARIABLES:
+        if variable in variables and variables[variable]:
+            # Format variable name for readability
+            formatted_name = variable.replace("_", " ").title()
+            context_parts.append(f"{formatted_name}: {variables[variable]}")
+    
+    if context_parts:
+        return "\n\nPatient Information:\n" + "\n".join(context_parts)
+    
+    return ""
+
+def reset_arena_context(user_id, model_name):
+    """Reset the user context for a specific model after providing a medical response"""
+    if user_id in arena_context and model_name in arena_context[user_id]:
+        arena_context[user_id][model_name]["collected_variables"] = {}
+        arena_context[user_id][model_name]["current_variable"] = None
+        arena_context[user_id][model_name]["variables_collected"] = False
+
+def generate_variable_question_with_gemini_arena(user_id, model_name, variable_name, user_message):
+    """Use Gemini to generate a contextual question for a specific variable in arena"""
+    global genai, gemini_model
+    
+    # Use Gemini to generate the question
+    try:
+        # Build context from chat history
+        context_parts = []
+        if user_id in arena_context and model_name in arena_context[user_id] and arena_context[user_id][model_name]["chat_history"]:
+            # Get last few messages for context
+            recent_messages = list(arena_context[user_id][model_name]["chat_history"])[-3:]
+            for msg in recent_messages:
+                role = "User" if msg["role"] == "user" else "Dr. Vaani"
+                context_parts.append(f"{role}: {msg['message']}")
+        
+        context = "\n".join(context_parts)
+        
+        # Create prompt for Gemini to generate a question
+        prompt = f"""
+You are Dr. Vaani, a friendly AI medical assistant. Your task is to generate a natural, contextual question to collect a specific piece of medical information from the user.
+
+The variable you need to ask about is: {variable_name}
+
+Context (conversation history):
+{context}
+
+Current user message: {user_message}
+
+Generate a natural, conversational question to collect information about {variable_name}. 
+The question should be:
+1. Contextually relevant based on the conversation history
+2. Natural and conversational, not robotic
+3. Specific to the variable being collected
+4. Easy for the user to understand and answer
+
+Example outputs:
+- For age: "Could you share your age with me?"
+- For gender: "May I know your gender?"
+- For symptoms_duration: "How long have you been experiencing these symptoms?"
+
+Question:"""
+        
+        # Use the single Gemini model instance
+        if gemini_model is not None:
+            generate_content = getattr(gemini_model, 'generate_content')
+            response = generate_content(prompt)
+        else:
+            raise Exception("Gemini model not available")
+        
+        # Return the generated question
+        question = response.text.strip()
+        return question if question else f"Please provide information about {variable_name.replace('_', ' ')}."
+            
+    except Exception as e:
+        logger.error(f"Error in Gemini question generation: {str(e)}")
+        # Return a generic question if Gemini fails
+        return f"Could you please provide information about your {variable_name.replace('_', ' ')}?"
+
+def get_arena_response(user_id, model_name, message):
+    """Get response from a specific model in the arena"""
+    global gemini_model, glm_client, openrouter_client
+    
+    # Initialize context if needed
+    if user_id not in arena_context or model_name not in arena_context[user_id]:
+        initialize_arena_context(user_id, model_name)
+    
+    # Add user message to chat history
+    add_to_arena_history(user_id, model_name, "user", message)
+    
+    # If we're already in the middle of collecting medical variables, 
+    # continue with medical consultation regardless of current message content
+    if not arena_context[user_id][model_name].get("variables_collected", False):
+        # If we're collecting a variable, store the user's response
+        current_variable = arena_context[user_id][model_name].get("current_variable")
+        if current_variable:
+            # Collect the variable value
+            next_variable = collect_variable_arena(user_id, model_name, current_variable, message)
+            
+            # If all variables are collected, provide the medical response
+            if next_variable is None:
+                # All variables collected, provide medical response
+                return provide_medical_response_arena(user_id, model_name, message)
+            else:
+                # Check if we already have this information
+                if next_variable in arena_context[user_id][model_name]["collected_variables"] and arena_context[user_id][model_name]["collected_variables"][next_variable]:
+                    # Skip this variable and get the next one
+                    next_variable = get_next_uncollected_variable_arena(user_id, model_name)
+                    if next_variable is None:
+                        # All variables collected, provide medical response
+                        arena_context[user_id][model_name]["variables_collected"] = True
+                        return provide_medical_response_arena(user_id, model_name, message)
+                
+                # Check if all required variables are already collected
+                collected = arena_context[user_id][model_name]["collected_variables"]
+                required_vars = ["age", "gender", "symptoms_duration"]
+                all_required_collected = all(var in collected and collected[var] for var in required_vars)
+                
+                if all_required_collected:
+                    # All required variables collected, provide medical response
+                    arena_context[user_id][model_name]["variables_collected"] = True
+                    return provide_medical_response_arena(user_id, model_name, message)
+                
+                # If we still need this variable, generate a question for it
+                if model_name == "gemini":
+                    question = generate_variable_question_with_gemini_arena(user_id, model_name, next_variable, message)
+                else:
+                    # For other models, use a simple question
+                    question = f"Could you please provide information about your {next_variable.replace('_', ' ')}?"
+                
+                arena_context[user_id][model_name]["current_variable"] = next_variable
+                # Add AI response to chat history
+                add_to_arena_history(user_id, model_name, "assistant", question)
+                return question
+        else:
+            # First message in conversation - check if all required variables are already provided
+            collected = arena_context[user_id][model_name]["collected_variables"]
+            required_vars = ["age", "gender", "symptoms_duration"]
+            all_required_collected = all(var in collected and collected[var] for var in required_vars)
+            
+            if all_required_collected:
+                # All required variables collected, provide medical response
+                arena_context[user_id][model_name]["variables_collected"] = True
+                return provide_medical_response_arena(user_id, model_name, message)
+            else:
+                # Ask for the first missing variable
+                next_variable = get_next_uncollected_variable_arena(user_id, model_name)
+                if next_variable:
+                    if model_name == "gemini":
+                        question = generate_variable_question_with_gemini_arena(user_id, model_name, next_variable, message)
+                    else:
+                        # For other models, use a simple question
+                        question = f"Could you please provide information about your {next_variable.replace('_', ' ')}?"
+                    
+                    arena_context[user_id][model_name]["current_variable"] = next_variable
+                    # Add AI response to chat history
+                    add_to_arena_history(user_id, model_name, "assistant", question)
+                    return question
+                else:
+                    # All variables collected, provide medical response
+                    arena_context[user_id][model_name]["variables_collected"] = True
+                    return provide_medical_response_arena(user_id, model_name, message)
+    else:
+        # Initialize context and start collecting variables
+        # Check if all required variables are already provided
+        collected = arena_context[user_id][model_name]["collected_variables"]
+        required_vars = ["age", "gender", "symptoms_duration"]
+        all_required_collected = all(var in collected and collected[var] for var in required_vars)
+        
+        if all_required_collected:
+            # All required variables collected, provide medical response
+            arena_context[user_id][model_name]["variables_collected"] = True
+            return provide_medical_response_arena(user_id, model_name, message)
+        else:
+            # Extract all variables at once from the initial message
+            # For simplicity, we'll just ask for the first missing variable
+            next_variable = get_next_uncollected_variable_arena(user_id, model_name)
+            if next_variable:
+                if model_name == "gemini":
+                    question = generate_variable_question_with_gemini_arena(user_id, model_name, next_variable, message)
+                else:
+                    # For other models, use a simple question
+                    question = f"Could you please provide information about your {next_variable.replace('_', ' ')}?"
+                
+                arena_context[user_id][model_name]["current_variable"] = next_variable
+                # Add AI response to chat history
+                add_to_arena_history(user_id, model_name, "assistant", question)
+                return question
+            else:
+                # All variables collected, provide medical response
+                arena_context[user_id][model_name]["variables_collected"] = True
+                return provide_medical_response_arena(user_id, model_name, message)
+
+def provide_medical_response_arena(user_id, model_name, original_message):
+    """Provide the final structured medical response after collecting all variables for a specific model"""
+    global gemini_model
+    
+    # Use the system prompt for the specific model
+    system_prompt = SYSTEM_PROMPTS.get(model_name, SYSTEM_PROMPTS["gemini"])
+    
+    # Prepare the prompt with system context
+    prompt = system_prompt + f"\n\nUser concern: {original_message}"
+    
+    # Add patient information context
+    patient_context = get_user_context_prompt_arena(user_id, model_name)
+    if patient_context:
+        prompt += patient_context
+    
+    # Add instruction about mode based on query type
+    prompt += "\n\nCRITICAL INSTRUCTIONS: User has medical concerns. You MUST follow the EXACT structured format from the system prompt with these specific requirements:"
+    prompt += "\n1. General Treatment (5 points) - exactly 5 bullet points"
+    prompt += "\n2. Medical Treatment (5 points) - exactly 5 bullet points"
+    prompt += "\n3. Precautions (3 points) - exactly 3 bullet points" 
+    prompt += "\n4. Reasons (3 points) - exactly 3 bullet points"
+    prompt += "\n5. When to see doctor (2 points) - exactly 2 bullet points"
+    prompt += "\n6. Acknowledgement and Conclusion - exactly 1 section"
+    prompt += "\nUse the EXACT section titles as shown in the system prompt example."
+    prompt += "\nUse bullet points with hyphens as shown in the example."
+    prompt += "\nKeep response under 30 lines total."
+    
+    logger.info(f"Sending prompt to {model_name}: {prompt[:100]}...")  # Log first 100 chars
+    
+    # Generate response based on model
+    try:
+        if model_name == "gemini" and gemini_model is not None:
+            generate_content = getattr(gemini_model, 'generate_content')
+            response = generate_content(prompt)
+            full_response = response.text if hasattr(response, 'text') else str(response)
+        elif model_name == "glm":
+            full_response = generate_glm_response(prompt)
+        elif model_name == "openrouter":
+            full_response = generate_openrouter_response(prompt)
+        else:
+            raise Exception(f"Model {model_name} not available")
+    except Exception as e:
+        logger.error(f"Error generating content with {model_name}: {str(e)}")
+        # Return error response when model fails
+        error_response = f"I'm currently experiencing technical difficulties with {model_name}. Please try again later."
+        # Add AI response to chat history
+        add_to_arena_history(user_id, model_name, "assistant", error_response)
+        # Reset user context
+        reset_arena_context(user_id, model_name)
+        return error_response
+    
+    # Clean the response
+    cleaned_response = clean_response(full_response)
+    
+    # Add AI response to chat history
+    add_to_arena_history(user_id, model_name, "assistant", cleaned_response)
+    
+    # Log the complete response
+    logger.info(f"Complete response from {model_name}: {cleaned_response[:100]}...")
+    
+    # Reset user context for next consultation
+    reset_arena_context(user_id, model_name)
+    
+    return cleaned_response
 
 # Import Google Generative AI with proper module access
 def initialize_gemini():
@@ -135,15 +599,15 @@ def extract_variables_with_gemini(user_id, message):
         # Build context from chat history
         context_parts = []
         if user_id in chat_context and chat_context[user_id]["chat_history"]:
-            # Get last few messages for context
-            recent_messages = list(chat_context[user_id]["chat_history"])[-5:]
+            # Get last 10 messages for better context (expanded from 5)
+            recent_messages = list(chat_context[user_id]["chat_history"])[-10:]
             for msg in recent_messages:
                 role = "User" if msg["role"] == "user" else "Dr. Vaani"
                 context_parts.append(f"{role}: {msg['message']}")
         
         context = "\n".join(context_parts)
         
-        # Create prompt for Gemini to extract variables
+        # Create enhanced prompt for Gemini to extract variables
         prompt = f"""
 You are an expert medical information extractor and conversational assistant. Your task is to analyze the user's message and extract ALL specific medical variables with extreme precision from a SINGLE message.
 
@@ -202,6 +666,14 @@ For message "I have headache since yesterday":
   "symptom_specifications": "headache"
 }}
 
+For message "im having throat ulcers my age is 20 years, my gender is male, im having symptoms since past 12 hours":
+{{
+  "age": "20",
+  "gender": "Male",
+  "symptoms_duration": "since past 12 hours",
+  "symptom_specifications": "throat ulcers"
+}}
+
 JSON Response:"""
         
         # Use the single Gemini model instance
@@ -211,14 +683,56 @@ JSON Response:"""
         else:
             raise Exception("Gemini model not available")
         
-        # Parse the JSON response
+        # Enhanced JSON parsing with multiple fallback strategies
         import json
+        import re
+        
         try:
-            extracted = json.loads(response.text.strip())
-            return extracted
-        except json.JSONDecodeError:
-            # If JSON parsing fails, return empty dict
-            logger.warning("Gemini variable extraction failed")
+            response_text = response.text.strip()
+            
+            # Strategy 1: Direct JSON parsing
+            try:
+                extracted = json.loads(response_text)
+                return extracted
+            except json.JSONDecodeError:
+                pass
+            
+            # Strategy 2: Extract JSON from markdown code blocks
+            json_match = re.search(r'```json\s*({.*?})\s*```', response_text, re.DOTALL)
+            if json_match:
+                try:
+                    extracted = json.loads(json_match.group(1))
+                    return extracted
+                except json.JSONDecodeError:
+                    pass
+            
+            # Strategy 3: Extract JSON-like object using regex
+            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            json_matches = re.findall(json_pattern, response_text)
+            
+            for json_str in json_matches:
+                try:
+                    extracted = json.loads(json_str)
+                    if isinstance(extracted, dict) and any(key in extracted for key in REQUIRED_VARIABLES):
+                        return extracted
+                except json.JSONDecodeError:
+                    continue
+            
+            # Strategy 4: Try to parse as Python literal (safer than eval)
+            try:
+                import ast
+                parsed = ast.literal_eval(response_text)
+                if isinstance(parsed, dict):
+                    return parsed
+            except (ValueError, SyntaxError):
+                pass
+            
+            # If all strategies fail, log the response for debugging
+            logger.warning(f"Gemini variable extraction failed - response: {response_text[:200]}...")
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Error processing Gemini response: {str(e)}")
             return {}
             
     except Exception as e:
@@ -226,6 +740,68 @@ JSON Response:"""
         # Return empty dict if Gemini fails
         return {}
 
+
+def generate_contextual_response_with_gemini(user_id, user_message, extracted_variables):
+    """Use Gemini to generate a smart contextual response based on conversation history and extracted variables"""
+    global genai, gemini_model
+    
+    try:
+        # Build comprehensive context from chat history
+        context_parts = []
+        if user_id in chat_context and chat_context[user_id]["chat_history"]:
+            # Get last 15 messages for deeper context (expanded from 10 to 15)
+            recent_messages = list(chat_context[user_id]["chat_history"])[-15:]
+            for msg in recent_messages:
+                role = "User" if msg["role"] == "user" else "Dr. Vaani"
+                context_parts.append(f"{role}: {msg['message']}")
+        
+        conversation_context = "\n".join(context_parts)
+        
+        # Create prompt for contextual response generation
+        prompt = f"""
+You are Dr. Vaani, an expert AI medical assistant with advanced conversational intelligence. Your task is to generate a smart, contextual response that acknowledges the user's input and guides the conversation naturally.
+
+Conversation History:
+{conversation_context}
+
+Current User Message: {user_message}
+
+Extracted Variables: {extracted_variables}
+
+Generate a contextual response that:
+1. Acknowledges what the user just said
+2. Shows understanding of the extracted medical information
+3. Naturally guides the conversation toward collecting missing required variables (age, gender, symptoms_duration)
+4. Maintains a friendly, conversational tone
+5. Avoids sounding robotic or repetitive
+
+Examples of smart contextual responses:
+
+If user says "I have a headache" and we have age=25, gender=Male but no duration:
+"I understand you're experiencing a headache at 25 years old. How long have you been dealing with this headache?"
+
+If user says "My daughter has a fever" and we have age=8, gender=Female but no duration:
+"I see your 8-year-old daughter has a fever. When did this fever start?"
+
+If user provides complete information:
+"Thank you for sharing all the details about your symptoms. Let me analyze this information and provide you with comprehensive medical guidance."
+
+Current Contextual Response:"""
+        
+        # Use the single Gemini model instance
+        if gemini_model is not None:
+            generate_content = getattr(gemini_model, 'generate_content')
+            response = generate_content(prompt)
+        else:
+            raise Exception("Gemini model not available")
+        
+        # Return the generated contextual response
+        contextual_response = response.text.strip()
+        return contextual_response if contextual_response else None
+            
+    except Exception as e:
+        logger.error(f"Error in contextual response generation: {str(e)}")
+        return None
 
 def generate_variable_question_with_gemini(user_id, variable_name, user_message):
     """Use Gemini to generate a contextual question for a specific variable"""
@@ -289,7 +865,7 @@ Question:"""
 def initialize_user_context(user_id):
     """Initialize context for a new user"""
     chat_context[user_id] = {
-        "chat_history": deque(maxlen=10),  # Keep only last 10 messages
+        "chat_history": deque(maxlen=25),  # Keep last 25 messages for better context
         "collected_variables": {},
         "current_variable": None,
         "variables_collected": False
@@ -530,22 +1106,28 @@ def is_medical_query(message):
     """Check if the message contains medical keywords"""
     message_lower = message.lower().strip()
     
-    # Check if it's a simple greeting
-    if message_lower in SIMPLE_GREETINGS:
-        return False
-    
     # Check for medical keywords
     if any(keyword in message_lower for keyword in MEDICAL_KEYWORDS):
         return True
     
     # Additional check for common medical phrases
-    return any(phrase in message_lower for phrase in MEDICAL_PHRASES)
+    if any(phrase in message_lower for phrase in MEDICAL_PHRASES):
+        return True
+    
+    # If we reach here, it's not a medical query
+    return False
 
 def is_simple_greeting(message):
     """Check if the message is a simple greeting"""
     message_lower = message.lower().strip()
     # Check for exact matches and simple greetings
     if message_lower in SIMPLE_GREETINGS:
+        # Even if it's a greeting, check if it contains medical content
+        has_medical_content = any(keyword in message_lower for keyword in MEDICAL_KEYWORDS) or \
+                             any(phrase in message_lower for phrase in MEDICAL_PHRASES)
+        # If it has medical content, it's not a simple greeting
+        if has_medical_content:
+            return False
         return True
     
     # Check if it's primarily a greeting (more than 50% greeting words)
@@ -554,7 +1136,14 @@ def is_simple_greeting(message):
         return False
     
     greeting_words = sum(1 for word in words if word in SIMPLE_GREETINGS)
-    return (greeting_words / len(words)) > 0.5
+    is_greeting_dominant = (greeting_words / len(words)) > 0.5
+    
+    # However, if the message contains medical keywords or phrases, it's not a simple greeting
+    has_medical_content = any(keyword in message_lower for keyword in MEDICAL_KEYWORDS) or \
+                         any(phrase in message_lower for phrase in MEDICAL_PHRASES)
+    
+    # It's a simple greeting only if it's greeting-dominant AND doesn't contain medical content
+    return is_greeting_dominant and not has_medical_content
 
 def clean_response(response_text):
     """Clean response for direct presentation"""
@@ -640,236 +1229,165 @@ def chat():
                 return Response(translated_response, mimetype='text/plain')
             return Response(greeting_response, mimetype='text/plain')
         
-        # Check if this is a medical query using the preprocessed (English) message
-        is_medical = is_medical_query(processed_message)
-        
-        # If we're already in the middle of collecting medical variables, 
-        # continue with medical consultation regardless of current message content
-        if user_id in chat_context and not chat_context[user_id].get("variables_collected", False):
-            is_medical = True
-        
-        # If not a medical query, provide general response
-        if not is_medical:
-            # Use the system prompt
-            system_prompt = SYSTEM_PROMPT
+        # Check if this is a medical query
+        if is_medical_query(processed_message):
+            # Extract variables using Gemini
+            extracted_variables = extract_variables_with_gemini(user_id, processed_message)
+            if extracted_variables:
+                # Collect extracted variables
+                for variable, value in extracted_variables.items():
+                    collect_variable(user_id, variable, value)
             
-            # Prepare the prompt with system context
-            prompt = system_prompt.format(user_message=original_message)
-            
-            prompt += "\n\nIMPORTANT: User wants general conversation. Respond naturally and briefly. Be helpful but don't provide medical advice unless explicitly asked."
-            # Add specific instruction to respond in the user's language
-            prompt += f"\n\nIMPORTANT: Respond in the same language as the user's message: {original_message}"
-            
-            logger.info(f"Sending prompt to Gemini: {prompt[:100]}...")  # Log first 100 chars
-            
-            # Generate response using Gemini (non-streaming for better language detection)
-            try:
-                # Use the single Gemini model instance
-                if gemini_model is not None:
-                    response = gemini_model.generate_content(prompt)
-                else:
-                    raise Exception("Gemini model not available")
-            except Exception as e:
-                logger.error(f"Error generating content with Gemini: {str(e)}")
-                # Return error response when Gemini fails
-                error_response = "I'm currently experiencing technical difficulties. Please try again later."
-                if response_language != 'en':
-                    error_response = translate_text(error_response, response_language)
-                    logger.info(f"Translated error response to {response_language}: {error_response}")
-                # Add AI response to chat history
-                add_to_chat_history(user_id, "assistant", error_response)
-                return Response(error_response, mimetype='text/plain')
-            
-            # Get the full response text
-            full_response = response.text if hasattr(response, 'text') else str(response)
-            
-            # Clean the response
-            cleaned_response = clean_response(full_response)
-            
-            # Add AI response to chat history
-            add_to_chat_history(user_id, "assistant", cleaned_response)
-            
-            # Log the complete response
-            logger.info(f"Complete response: {cleaned_response[:100]}...")
-            
-            # Translate the entire response if needed - no limits on translation
-            if response_language != 'en':
-                translated_response = translate_text(cleaned_response, response_language)
-                logger.info(f"Translated response to {response_language}: {translated_response[:100]}...")
-                return Response(translated_response, mimetype='text/plain')
-            
-            return Response(cleaned_response, mimetype='text/plain')
-        
-        # Handle medical query with streamlined variable collection workflow
-        # Check if we're in the middle of collecting variables
-        if user_id in chat_context and not chat_context[user_id].get("variables_collected", False):
-            # If we're collecting a variable, store the user's response
-            current_variable = chat_context[user_id].get("current_variable")
-            if current_variable:
-                # Collect the variable value
-                next_variable = collect_variable(user_id, current_variable, user_message)
-                
-                # If all variables are collected, provide the medical response
-                if next_variable is None:
-                    # All variables collected, provide medical response
-                    return provide_medical_response(user_id, original_message, response_language, source_language)
-                else:
-                    # Check if we already have this information
-                    if next_variable in chat_context[user_id]["collected_variables"] and chat_context[user_id]["collected_variables"][next_variable]:
-                        # Skip this variable and get the next one
-                        next_variable = get_next_uncollected_variable(user_id)
-                        if next_variable is None:
-                            # All variables collected, provide medical response
-                            chat_context[user_id]["variables_collected"] = True
-                            return provide_medical_response(user_id, original_message, response_language, source_language)
-                    
-                    # If we still need this variable, generate a question for it
-                    question = generate_variable_question_with_gemini(user_id, next_variable, user_message)
-                    chat_context[user_id]["current_variable"] = next_variable
-                    # Add AI response to chat history
-                    add_to_chat_history(user_id, "assistant", question)
-                    return Response(question, mimetype='text/plain')
-            else:
-                # First message in conversation - extract all variables at once
-                extracted_variables = extract_variables_with_gemini(user_id, user_message)
-                
-                # Add extracted variables to context
-                for key, value in extracted_variables.items():
-                    if key != 'suggested_question':  # Skip the suggested question key
-                        # Skip optional variables if user says "No" or similar
-                        if key in ["recent_medical_history", "allergies", "chronic_diseases"] and str(value).lower() in ["no", "nope", "none", "nothing", "n/a", "na", "n"]:
-                            chat_context[user_id]["collected_variables"][key] = "None reported"
-                        else:
-                            chat_context[user_id]["collected_variables"][key] = value
-                
-                # Check what variables are still missing
-                missing_variables = []
-                collected = chat_context[user_id]["collected_variables"]
-                for variable in REQUIRED_VARIABLES:
-                    if variable not in collected or not collected[variable]:
-                        missing_variables.append(variable)
-                
-                # If all required variables are collected, provide the medical response
-                if not missing_variables:
-                    chat_context[user_id]["variables_collected"] = True
-                    return provide_medical_response(user_id, original_message, response_language, source_language)
-                
-                # Ask for missing variables one by one
-                next_variable = get_next_uncollected_variable(user_id)
-                if next_variable:
-                    # Check if we already have this information
-                    if next_variable in chat_context[user_id]["collected_variables"] and chat_context[user_id]["collected_variables"][next_variable]:
-                        # Skip this variable and get the next one
-                        next_variable = get_next_uncollected_variable(user_id)
-                        if next_variable is None:
-                            # All variables collected, provide medical response
-                            chat_context[user_id]["variables_collected"] = True
-                            return provide_medical_response(user_id, original_message, response_language, source_language)
-                    
-                    # Ask Gemini to generate a question for this specific variable
-                    question = generate_variable_question_with_gemini(user_id, next_variable, user_message)
-                    chat_context[user_id]["current_variable"] = next_variable
-                    # Add AI response to chat history
-                    add_to_chat_history(user_id, "assistant", question)
-                    return Response(question, mimetype='text/plain')
-                else:
-                    # All variables collected, provide medical response
-                    chat_context[user_id]["variables_collected"] = True
-                    return provide_medical_response(user_id, original_message, response_language, source_language)
-        else:
-            # Initialize context and start collecting variables
-            if user_id not in chat_context:
-                initialize_user_context(user_id)
-            
-            # Extract all variables at once from the initial message
-            extracted_variables = extract_variables_with_gemini(user_id, user_message)
-            
-            # Add extracted variables to context
-            for key, value in extracted_variables.items():
-                if key != 'suggested_question':  # Skip the suggested question key
-                    # Skip optional variables if user says "No" or similar
-                    if key in ["recent_medical_history", "allergies", "chronic_diseases"] and str(value).lower() in ["no", "nope", "none", "nothing", "n/a", "na", "n"]:
-                        chat_context[user_id]["collected_variables"][key] = "None reported"
-                    else:
-                        chat_context[user_id]["collected_variables"][key] = value
-            
-            # Check what variables are still missing
-            missing_variables = []
-            collected = chat_context[user_id]["collected_variables"]
-            for variable in REQUIRED_VARIABLES:
-                if variable not in collected or not collected[variable]:
-                    missing_variables.append(variable)
-            
-            # If all required variables are collected, provide the medical response
-            if not missing_variables:
-                chat_context[user_id]["variables_collected"] = True
-                return provide_medical_response(user_id, original_message, response_language, source_language)
-            
-            # Ask for missing variables one by one
+            # Check if all required variables are collected after extraction
             next_variable = get_next_uncollected_variable(user_id)
             if next_variable:
-                # Check if we already have this information
-                if next_variable in chat_context[user_id]["collected_variables"] and chat_context[user_id]["collected_variables"][next_variable]:
-                    # Skip this variable and get the next one
-                    next_variable = get_next_uncollected_variable(user_id)
-                    if next_variable is None:
-                        # All variables collected, provide medical response
-                        chat_context[user_id]["variables_collected"] = True
-                        return provide_medical_response(user_id, original_message, response_language, source_language)
+                # Check if we already have all required variables despite next_variable being returned
+                # This can happen if the get_next_uncollected_variable function has a bug
+                collected = chat_context[user_id]["collected_variables"]
+                required_vars = ["age", "gender", "symptoms_duration"]
+                all_required_collected = all(var in collected and collected[var] for var in required_vars)
                 
-                # Ask Gemini to generate a question for this specific variable
-                question = generate_variable_question_with_gemini(user_id, next_variable, user_message)
-                chat_context[user_id]["current_variable"] = next_variable
-                # Add AI response to chat history
-                add_to_chat_history(user_id, "assistant", question)
-                return Response(question, mimetype='text/plain')
+                if all_required_collected:
+                    # All required variables collected, provide medical response
+                    return provide_medical_response(user_id, original_message, response_language, source_language)
+                else:
+                    # Try to generate a smart contextual response first
+                    smart_response = generate_contextual_response_with_gemini(user_id, processed_message, extracted_variables)
+                    
+                    if smart_response:
+                        # Use the smart contextual response
+                        add_to_chat_history(user_id, "assistant", smart_response)
+                        # Translate to target language if needed
+                        if response_language != 'en':
+                            translated_response = translate_text(smart_response, response_language)
+                            return Response(translated_response, mimetype='text/plain')
+                        return Response(smart_response, mimetype='text/plain')
+                    else:
+                        # Fallback to the original variable question generation
+                        question = generate_variable_question_with_gemini(user_id, next_variable, processed_message)
+                        # Add AI response to chat history
+                        add_to_chat_history(user_id, "assistant", question)
+                        # Translate to target language if needed
+                        if response_language != 'en':
+                            translated_response = translate_text(question, response_language)
+                            return Response(translated_response, mimetype='text/plain')
+                        return Response(question, mimetype='text/plain')
             else:
                 # All variables collected, provide medical response
-                chat_context[user_id]["variables_collected"] = True
                 return provide_medical_response(user_id, original_message, response_language, source_language)
+        else:
+            # Non-medical query - respond with a generic message
+            non_medical_response = "I'm here to help with medical concerns. If you have any health-related questions, feel free to ask!"
+            # Add AI response to chat history
+            add_to_chat_history(user_id, "assistant", non_medical_response)
+            # Translate to target language if needed
+            if response_language != 'en':
+                translated_response = translate_text(non_medical_response, response_language)
+                logger.info(f"Translated non-medical response to {response_language}: {translated_response}")
+                return Response(translated_response, mimetype='text/plain')
+            return Response(non_medical_response, mimetype='text/plain')
     
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}")
-        # Use fallback response for general errors
-        try:
-            data = request.get_json()
-            user_message = data.get('message', '') if data else ''
-            source_language = data.get('source_language', 'en') if data else 'en'
-            user_id = data.get('user_id', 'default_user') if data else 'default_user'
+        return jsonify({"error": f"Chat service error: {str(e)}"}), 500
+
+@app.route('/arena', methods=['POST'])
+def arena():
+    try:
+        # Get user message and user ID from request
+        data = request.get_json()
+        user_message = data.get('message', '') if data else ''
+        user_id = data.get('user_id', 'default_user') if data else 'default_user'
+        
+        if not user_message:
+            return jsonify({"error": "Message is required"}), 400
+        
+        # Use ThreadPoolExecutor to run the model requests concurrently
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            # Submit tasks to the executor
+            gemini_future = executor.submit(get_arena_response, user_id, "gemini", user_message)
+            glm_future = executor.submit(get_arena_response, user_id, "glm", user_message)
+            openrouter_future = executor.submit(get_arena_response, user_id, "openrouter", user_message)
             
-            # Preprocess the message to English for medical query detection
-            processed_message = user_message
-            if source_language != 'en':
-                processed_message = translate_text(user_message, 'en')
+            # Get results from the futures with timeout
+            try:
+                gemini_response = gemini_future.result(timeout=30)
+            except Exception as e:
+                logger.error(f"Error getting Gemini response: {str(e)}")
+                gemini_response = "Gemini model is currently unavailable. Please try again later."
             
-            is_medical = is_medical_query(processed_message) if processed_message else False
-            error_response = "I'm currently experiencing technical difficulties. Please try again later."
+            try:
+                glm_response = glm_future.result(timeout=30)
+            except Exception as e:
+                logger.error(f"Error getting GLM response: {str(e)}")
+                glm_response = "GLM model is currently unavailable. Please try again later."
             
-            target_language = data.get('language', 'en') if data else 'en'
-            translate_to = data.get('translate_to', 'en') if data else 'en'
-            response_language = translate_to
-            
-            # No limits on translation in error handling either
-            if response_language != 'en':
-                error_response = translate_text(error_response, response_language)
-            
-            # Add AI response to chat history
-            add_to_chat_history(user_id, "assistant", error_response)
-            return Response(error_response, mimetype='text/plain')
-        except Exception as inner_e:
-            logger.error(f"Error in fallback error handling: {str(inner_e)}")
-            error_msg = f"Service error: {str(e)}. Please try again later."
-            target_language = request.get_json().get('language', 'en') if request.get_json() else 'en'
-            translate_to = request.get_json().get('translate_to', 'en') if request.get_json() else 'en'
-            response_language = translate_to
-            user_id = request.get_json().get('user_id', 'default_user') if request.get_json() else 'default_user'
-            # No limits on translation even for error messages
-            if response_language != 'en':
-                error_msg = translate_text(error_msg, response_language)
-                logger.info(f"Translated error to {response_language}: {error_msg}")
-            # Add AI response to chat history
-            add_to_chat_history(user_id, "assistant", error_msg)
-            return Response(error_msg, mimetype='text/plain')
+            try:
+                openrouter_response = openrouter_future.result(timeout=30)
+            except Exception as e:
+                logger.error(f"Error getting OpenRouter response: {str(e)}")
+                openrouter_response = "OpenRouter model is currently unavailable. Please try again later."
+        
+        return jsonify({
+            "responses": {
+                "gemini": gemini_response,
+                "glm": glm_response,
+                "openrouter": openrouter_response
+            }
+        })
+    
+    except Exception as e:
+        logger.error(f"Error in arena endpoint: {str(e)}")
+        return jsonify({"error": f"Arena service error: {str(e)}"}), 500
+
+# Placeholder functions for GLM and OpenRouter responses
+def generate_glm_response(prompt):
+    """Generate a response using GLM model"""
+    global glm_client
+    
+    if glm_client is None:
+        logger.error("GLM client not initialized")
+        return "GLM model is not available at the moment."
+    
+    try:
+        # Use the zhipuai client to generate a response
+        response = glm_client.chat.completions.create(
+            model="glm-4.5",  # Using GLM-4-Plus model
+            messages=[
+                {"role": "system", "content": "You are Dr. Vaani, a friendly AI medical assistant powered by GLM 4.5. Your task is to collect patient information and provide structured medical advice."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=2000
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Error generating content with GLM: {str(e)}")
+        return "I'm currently experiencing technical difficulties with GLM. Please try again later."
+
+def generate_openrouter_response(prompt):
+    """Generate a response using OpenRouter model"""
+    global openrouter_client
+    
+    if openrouter_client is None:
+        logger.error("OpenRouter client not initialized")
+        return "OpenRouter model is not available at the moment."
+    
+    try:
+        # Use the openai client to generate a response
+        response = openrouter_client.chat.completions.create(
+            model="openai/gpt-3.5-turbo",  # Using GPT-3.5 Turbo via OpenRouter
+            messages=[
+                {"role": "system", "content": "You are Dr. Vaani, a friendly AI medical assistant powered by GPT-3.5 Turbo. Your task is to collect patient information and provide structured medical advice."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=2000
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Error generating content with OpenRouter: {str(e)}")
+        return "I'm currently experiencing technical difficulties with OpenRouter. Please try again later."
 
 # Endpoint for translating text to a target language
 @app.route('/translate', methods=['POST'])
@@ -1096,7 +1614,7 @@ def get_contextual_medicine_suggestions(symptoms):
                 primary_use = "symptom relief"
         
         # Format the suggestion with explanation
-        suggestions += f"- Take {medicine['name']} by {medicine['manufacturer_name']} ({medicine['short_composition1']}) - {dosage} for 5-7 days for {primary_use} - {medicine['short_composition1']} works by targeting the underlying cause of your symptoms\n"
+        suggestions += f"- Take {medicine['name']} ({medicine['short_composition1']}) - {dosage} for 5-7 days for {primary_use} - {medicine['short_composition1']} works by targeting the underlying cause of your symptoms\n"
         count += 1
         if count > 5:
             break

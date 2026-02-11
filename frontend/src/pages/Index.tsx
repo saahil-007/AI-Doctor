@@ -19,35 +19,35 @@ const Index = () => {
         {/* Left content */}
         <div className="flex-1 p-8 md:p-16 relative z-10 flex flex-col justify-center">
           <div className="max-w-2xl">
-            <div className="flex items-center gap-2 mb-6">
-              <Sparkles className="w-6 h-6 text-neutral-400" />
-              <span className="text-neutral-400 text-sm font-medium">AI-Powered Healthcare</span>
+            <div className="flex items-center gap-3 mb-8">
+              <Sparkles className="w-5 h-5 text-cyan-400" />
+              <span className="text-cyan-400 text-sm font-semibold tracking-wide uppercase">AI-Powered Healthcare</span>
             </div>
             
-            <h1 className="text-5xl md:text-7xl font-bold bg-clip-text text-transparent bg-gradient-to-b from-neutral-50 to-neutral-400 mb-6">
+            <h1 className="text-6xl md:text-8xl font-extrabold bg-clip-text text-transparent bg-gradient-to-br from-white via-neutral-100 to-neutral-400 mb-8 leading-tight">
               AI Doctor
             </h1>
             
-            <p className="text-lg md:text-xl text-neutral-300 mb-8 max-w-lg leading-relaxed">
+            <p className="text-xl md:text-2xl text-neutral-200 mb-10 max-w-xl leading-relaxed font-light">
               Experience the future of healthcare with our intelligent AI assistant. 
               Get instant medical insights, personalized health advice, and 24/7 support 
               powered by advanced artificial intelligence.
             </p>
 
-            <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex flex-col sm:flex-row gap-5">
               <Button
                 size="lg"
                 onClick={() => navigate("/chat")}
-                className="bg-gradient-to-b from-neutral-50 to-neutral-400 text-black hover:from-neutral-100 hover:to-neutral-500 font-semibold"
+                className="bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-bold px-8 py-6 rounded-xl shadow-lg hover:shadow-cyan-500/25 transition-all duration-300 transform hover:scale-105"
               >
                 Get Started
-                <ArrowRight className="ml-2 h-5 w-5" />
+                <ArrowRight className="ml-3 h-6 w-6" />
               </Button>
               
               <Button
                 size="lg"
                 variant="outline"
-                className="border-neutral-700 text-neutral-300 hover:bg-neutral-900 hover:text-neutral-100"
+                className="border-neutral-600 text-cyan-400 hover:bg-neutral-800 hover:text-cyan-300 hover:border-neutral-500 font-semibold px-8 py-6 rounded-xl transition-all duration-300"
               >
                 Learn More
               </Button>

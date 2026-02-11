@@ -1,193 +1,96 @@
-# AI Doctor - Medical Chatbot
+# AI Doctor v3.1 - Intelligent Healthcare Assistant
 
-A lightweight Flask web application that integrates Google's Generative AI model to provide medical assistance and general conversation.
+![Landing Page](./frontend/src/assets/screenshots/landing.png)
 
-## Features
+AI Doctor is a cutting-edge, full-stack healthcare platform that leverages advanced Large Language Models (LLMs) to provide instant, structured, and personalized medical consultation. Featuring a modern, immersive 3D interface and multi-model comparison capabilities, it represents the future of AI-driven primary care.
 
-- **AI-Powered Medical Assistance**: Get medical advice and information using Google's Gemini AI
-- **Structured Medical Responses**: Follows a standardized format with General Treatment, Medical Treatment (5 Indian medicines with dosage), Precautions, Reasons, and When to See Doctor sections
-- **Multilingual Support**: Communicate in English, Hindi, and Marathi
-- **Real-time Translation**: Translate responses between supported languages
-- **Text-to-Speech**: Listen to responses with natural-sounding voices using the browser's built-in Web Speech API
-- **Speech Recognition**: Speak your questions instead of typing
-- **Responsive Design**: Works on desktop and mobile devices
+## 🚀 Key Features
 
-## Technologies Used
+- **Multi-Model Arena**: Compare medical advice from industry-leading LLMs including **Google Gemini 2.0 Flash**, **GLM 4.5**, and **GPT-3.5 Turbo** (via OpenRouter) simultaneously.
+- **Structured Medical Consultation**: Follows a rigorous clinical protocol to collect patient data (vitals, symptoms, history) and deliver structured advice:
+    - General Treatment
+    - Medical Treatment (Composition-focused)
+    - Precautions & Safety Guidelines
+    - Clinical Reasoning
+    - Emergency Escalation Triggers
+- **Immersive 3D Experience**: Powered by **Spline**, the landing page features a high-fidelity 3D medical robot assistant to engage users.
+- **Multilingual & Accessible**: Full support for English, Hindi, and Marathi with real-time translation powered by the MyMemory API.
+- **Voice-First Interface**: Hands-free interaction using high-accuracy Speech-to-Text (STT) and natural-sounding Text-to-Speech (TTS).
+- **Responsive & Modern UI**: Built with **React**, **Tailwind CSS**, and **Framer Motion** for a fluid, dark-themed industrial aesthetic.
 
-- **Backend**: Python, Flask
-- **AI**: Google Generative AI (Gemini)
-- **Frontend**: React, Vite, TypeScript, shadcn-ui, Tailwind CSS
-- **APIs**: MyMemory Translation API
-- **Voice**: Web Speech API
+## 🛠️ Tech Stack
 
-## Kaggle Dataset
+### Frontend
+- **Framework**: React 18 with Vite & TypeScript
+- **Styling**: Tailwind CSS & Lucide Icons
+- **Components**: Radix UI (Headless UI) & shadcn/ui
+- **Animations**: Framer Motion
+- **3D Graphics**: Spline Runtime
 
-This application references the [AI Doctor - BluePlanet](https://www.kaggle.com/datasets/saahilgange/ai-doctor-blueplanet/) dataset on Kaggle for medical keywords and phrases instead of using local data files. The [data/](file:///c:/Users/SAHIL/Desktop/BluePlanet/AI%20Doctor%20v2.0/data/) directory contains reference files that show the expected structure of the Kaggle dataset.
+### Backend
+- **Server**: Flask (Python 3.x)
+- **AI Orchestration**: Google Generative AI, Zhipu AI (GLM), OpenRouter
+- **Translation**: MyMemory API
+- **Deployment**: Vercel Serverless Functions
 
-## Setup Instructions
+## 📸 Screenshots
+
+### 1. Immersive Landing Page
+The landing page features a 3D medical robot, setting the tone for a futuristic healthcare experience.
+![Landing Page](./frontend/src/assets/screenshots/landing.png)
+
+### 2. Multi-Model Arena
+Compare responses from different AI models to ensure the most comprehensive advice.
+![Model Arena](./frontend/src/assets/screenshots/arena.png)
+
+### 3. Intelligent Chat Interface
+Dr. Vaani provides personalized care with multilingual support.
+![Chat Interface](./frontend/src/assets/screenshots/chat.png)
+
+## 📦 Installation & Setup
 
 ### Prerequisites
-- Python 3.7 or higher
-- Node.js and npm
-- Google Generative AI API key
+- Python 3.8+
+- Node.js 18+
+- API Keys: Google Gemini, GLM (Zhipu AI), OpenRouter
 
-### Local Development
+### Step-by-Step Guide
 
-1. **Download the repository**:
-   Download the repository as a ZIP file and extract it
-
-2. **Set up a virtual environment**:
+1. **Clone & Environment Setup**
    ```bash
+   git clone https://github.com/your-repo/ai-doctor-v3.1.git
+   cd ai-doctor-v3.1
    python -m venv venv
-   .\venv\Scripts\activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install backend dependencies**:
-   ```bash
+   source venv/bin/activate # Windows: .\venv\Scripts\activate
    pip install -r requirements.txt
    ```
 
-4. **Set up environment variables**:
-   Create a `.env` file in the root directory and add your API keys:
-   ```
-   GOOGLE_API_KEY=your_google_api_key_here
-   ```
-
-5. **Install frontend dependencies**:
+2. **Frontend Dependencies**
    ```bash
    cd frontend
    npm install
-   ```
-
-6. **Build the frontend**:
-   ```bash
    npm run build
+   cd ..
    ```
 
-7. **Run the application**:
+3. **Configuration**
+   Create a `.env` file in the root:
+   ```env
+   GOOGLE_API_KEY=your_key
+   GLM_API_KEY=your_key
+   OPENROUTER_API_KEY=your_key
+   ```
+
+4. **Launch**
    ```bash
-   cd ..
    python app.py
    ```
+   Access at `http://localhost:5000`
 
-8. **Access the application**:
-   Open your browser and go to `http://localhost:5000`
+## 📊 Dataset Reference
 
-## Usage
+This project utilizes the [AI Doctor - BluePlanet](https://www.kaggle.com/datasets/saahilgange/ai-doctor-blueplanet/) dataset for optimized medical terminology and phrasing patterns.
 
-1. Type your medical questions or general conversation in the input box
-2. Select your preferred language from the language selector
-3. Use the microphone button for voice input
-4. Use the speaker button to listen to responses
-5. Translate responses using the translation controls:
-   - Use the globe icon (🌐) to translate individual messages
-   - Use "Apply Translation" to translate all previous messages
+## ⚖️ Disclaimer
 
-## Project Structure
-
-```
-AI-Doctor/
-├── app.py                 # Main Flask application
-├── requirements.txt       # Python dependencies
-├── .env                   # Environment variables (not committed)
-├── .env.example           # Example environment variables file
-├── system_prompt.txt      # AI system prompt
-├── runtime.txt            # Python runtime version for Vercel
-├── vercel.json            # Vercel deployment configuration
-├── data/                  # Reference to Kaggle dataset structure
-│   ├── medical_keywords.json  # Medical keywords (reference)
-│   ├── simple_greetings.json  # Greeting phrases (reference)
-│   ├── medical_phrases.json   # Medical phrases (reference)
-│   └── README.md          # Information about Kaggle dataset reference
-├── frontend/              # React frontend application
-│   ├── dist/              # Built frontend files
-│   ├── src/               # Source code
-│   ├── package.json       # Frontend dependencies
-│   └── vite.config.ts     # Vite configuration
-└── README.md              # This file
-```
-
-## Deployment
-
-### Vercel Deployment
-
-This application is configured for deployment on Vercel:
-
-1. Download this repository to your local machine
-2. Sign up/log in to [Vercel](https://vercel.com)
-3. Create a new project and upload your files
-4. Add your `GOOGLE_API_KEY` as an environment variable in Vercel project settings:
-   - Key: `GOOGLE_API_KEY`
-   - Value: Your actual Google API key
-5. Make sure you have a `runtime.txt` file specifying the Python version (e.g., `python-3.9.18`)
-6. Deploy the project
-
-The `vercel.json` and `runtime.txt` configurations are already included in the repository.
-
-### Environment Variables
-
-For deployment, you need to set the following environment variables:
-- `GOOGLE_API_KEY`: Your Google Generative AI API key
-
-## Troubleshooting Vercel Deployment
-
-If you're seeing the "Gemini model is not available for requests - check API key configuration" error:
-
-1. **Verify your API keys**: Make sure you have valid API keys:
-   - Google Generative AI API key from [Google AI Studio](https://aistudio.google.com/)
-
-2. **Check environment variable setup**: In your Vercel project settings, ensure the environment variables are correctly set:
-   - Go to your Vercel project dashboard
-   - Click on "Settings" → "Environment Variables"
-   - Add the following variables:
-     - Key: `GOOGLE_API_KEY`, Value: Your actual Google API key
-     - Check "Production", "Preview", and "Development" environments
-
-3. **Redeploy your application**: After adding the environment variables, redeploy your application:
-   - Go to the "Deployments" tab
-   - Click on the three dots next to your latest deployment
-   - Select "Redeploy"
-
-4. **Check runtime version**: Ensure you have a `runtime.txt` file in your project root specifying the Python version:
-   ```
-   python-3.9.18
-   ```
-
-5. **Verify dependencies**: Make sure your `requirements.txt` includes:
-   ```
-   flask==3.1.2
-   google-generativeai==0.8.5
-   python-dotenv==1.0.0
-   ```
-
-## Improvements
-
-Recent enhancements have been made to improve the quality and specificity of medical responses:
-
-- **Enhanced Medical Treatment Format**: Ensures exactly 5 treatment points with Indian medicines including specific dosage instructions
-- **Better Symptom Matching**: Improved algorithm for finding relevant medicines based on symptoms
-- **Structured Response Format**: Clear section headers and consistent formatting for better readability
-- **Age-Appropriate Recommendations**: Takes into account patient age when suggesting treatments
-
-## API Endpoints
-
-- `POST /chat`: Main chat endpoint for sending messages to the AI
-- `POST /translate`: Endpoint for translating text between languages
-- `POST /text-to-speech`: Endpoint for converting text to speech using Web Speech API
-- `POST /stop-speech`: Endpoint for stopping speech playback
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Download and modify the repository files
-2. Make your changes
-3. Submit your changes via the platform of your choice
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Disclaimer
-
-This application provides general medical information only. It is not a substitute for professional medical advice, diagnosis, or treatment. Always seek the advice of your physician or other qualified health provider with any questions you may have regarding a medical condition.
+AI Doctor is an experimental AI tool designed for informational purposes only. It is **not a substitute for professional medical advice, diagnosis, or treatment**. Always seek the advice of your physician or other qualified health provider with any questions you may have regarding a medical condition.

@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Sidebar, SidebarBody, SidebarLink } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessageSquare, Settings, LogOut, Bot, Languages, Volume2, VolumeX } from "lucide-react";
+import { LayoutDashboard, MessageSquare, Settings, LogOut, Bot, Languages, Volume2, VolumeX, ArrowLeftRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { AIInput } from "@/components/ui/ai-input";
@@ -140,6 +140,13 @@ export default function Chat() {
       href: "/chat",
       icon: (
         <MessageSquare className="text-gray-600 dark:text-gray-300 h-5 w-5 flex-shrink-0" />
+      ),
+    },
+    {
+      label: "Arena",
+      href: "/arena",
+      icon: (
+        <ArrowLeftRight className="text-gray-600 dark:text-gray-300 h-5 w-5 flex-shrink-0" />
       ),
     },
     {
